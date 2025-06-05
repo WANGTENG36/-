@@ -1,0 +1,1625 @@
+import numpy as np
+import sqlite3
+import hashlib
+import json
+import re
+from datetime import datetime
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+from matplotlib.font_manager import FontProperties
+from matplotlib.animation import FuncAnimation
+import os
+import random
+from collections import Counter
+import base64
+import html
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score
+import pandas as pd
+import warnings
+import traceback
+import sys
+import time
+
+# 忽略警告
+warnings.filterwarnings('ignore')
+
+# 设置中文字体 - 增强版
+def setup_chinese_font():
+    """设置中文字体，支持多平台，提供更友好的错误处理"""
+    font_paths = [
+        # Windows系统
+        'C:/Windows/Fonts/simhei.ttf',  # 黑体
+        'C:/Windows/Fonts/simsun.ttc',   # 宋体
+        
+        # macOS系统
+        '/System/Library/Fonts/PingFang.ttc',
+        '/Library/Fonts/Arial Unicode.ttf',
+        
+        # Linux系统
+        '/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf',
+        '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc',
+        
+        # 备用方案
+        'Arial Unicode.ttf',
+        'simhei.ttf'
+    ]
+    
+    for path in font_paths:
+        try:
+            if os.path.exists(path):
+                font = FontProperties(fname=path)
+                print(f"成功加载字体: {path}")
+                return font
+        except Exception as e:
+            print(f"字体加载失败({path}): {str(e)}")
+            continue
+    
+    # 使用默认字体
+    print("警告：未找到中文字体文件，可能无法正确显示中文")
+    return FontProperties()
+
+font = setup_chinese_font()
+
+# ========== 易经核心结构 - 增强版 ==========
+class Trigram:
+    """八卦类，包含八卦的基本属性和关系"""
+    TRIGRAMS = [
+        (1, "乾", "天", "健", "父", "金", "西北", "君主", "创造", "刚健", "头"),
+        (2, "坤", "地", "顺", "母", "土", "西南", "臣民", "包容", "柔顺", "腹"),
+        (3, "震", "雷", "动", "长男", "木", "东方", "长子", "震动", "激发", "足"),
+        (4, "艮", "山", "止", "少男", "土", "东北", "少子", "静止", "阻止", "手"),
+        (5, "离", "火", "丽", "中女", "火", "南方", "中女", "光明", "依附", "目"),
+        (6, "坎", "水", "陷", "中男", "水", "北方", "中男", "险陷", "流动", "耳"),
+        (7, "兑", "泽", "悦", "少女", "金", "西方", "少女", "喜悦", "沟通", "口"),
+        (8, "巽", "风", "入", "长女", "木", "东南", "长女", "渗透", "顺从", "股"),
+    ]
+    
+    @classmethod
+    def get_trigram(cls, id):
+        """根据ID获取八卦信息"""
+        try:
+            for trigram in cls.TRIGRAMS:
+                if trigram[0] == id:
+                    return trigram
+            return None
+        except Exception as e:
+            print(f"获取八卦信息失败: {e}")
+            return None
+
+class Hexagram:
+    """六十四卦类，包含卦象生成、变爻处理、可视化等功能"""
+    # 完整的64卦数据库
+    HEXAGRAM_DB = {
+        # 乾宫八卦
+        (1, 1): ("乾为天", "元亨利贞", "刚健中正"),
+        (1, 2): ("天风姤", "女壮，勿用取女", "遇合之道"),
+        (1, 3): ("天山遁", "亨，小利贞", "退避之道"),
+        (1, 4): ("天地否", "否之匪人，不利君子贞", "闭塞不通"),
+        (1, 5): ("风地观", "盥而不荐，有孚顒若", "观察之道"),
+        (1, 6): ("山地剥", "不利有攸往", "剥落衰落"),
+        (1, 7): ("火地晋", "康侯用锡马蕃庶，昼日三接", "晋升发展"),
+        (1, 8): ("火天大有", "元亨", "大有所获"),
+        
+        # 坤宫八卦
+        (2, 1): ("地雷复", "亨。出入无疾，朋来无咎", "复归正道"),
+        (2, 2): ("坤为地", "坤厚载物", "柔顺利贞"),
+        (2, 3): ("地水师", "贞，丈人吉，无咎", "统率之道"),
+        (2, 4): ("地泽临", "元亨利贞。至于八月有凶", "临事审慎"),
+        (2, 5): ("雷天大壮", "大者壮也", "刚健而动"),
+        (2, 6): ("泽天夬", "扬于王庭，孚号有厉", "决断之道"),
+        (2, 7): ("水天需", "有孚，光亨，贞吉", "等待时机"),
+        (2, 8): ("水地比", "吉。原筮元永贞，无咎", "亲和团结"),
+        
+        # 震宫八卦
+        (3, 1): ("雷地豫", "利建侯行师", "愉悦之道"),
+        (3, 2): ("雷水解", "险以动，动而免乎险", "解除困境"),
+        (3, 3): ("震为雷", "亨。震来虩虩，笑言哑哑", "震动戒惧"),
+        (3, 4): ("雷风恒", "亨，无咎，利贞", "恒久之道"),
+        (3, 5): ("地风升", "元亨，用见大人，勿恤", "上升发展"),
+        (3, 6): ("水风井", "改邑不改井，无丧无得", "井养之道"),
+        (3, 7): ("泽风大过", "栋桡，利有攸往，亨", "非常行动"),
+        (3, 8): ("泽雷随", "元亨利贞，无咎", "随从之道"),
+        
+        # 艮宫八卦
+        (4, 1): ("山天大畜", "利贞，不家食吉，利涉大川", "大积蓄"),
+        (4, 2): ("山泽损", "有孚，元吉，无咎，可贞", "减损之道"),
+        (4, 3): ("山雷颐", "山下有雷", "养正则吉"),
+        (4, 4): ("艮为山", "艮其背，不获其身，行其庭，不见其人", "静止之道"),
+        (4, 5): ("风山渐", "女归吉，利贞", "渐进发展"),
+        (4, 6): ("水山蹇", "见险而能止", "知难而止"),
+        (4, 7): ("地山谦", "亨，君子有终", "谦虚之道"),
+        (4, 8): ("雷山小过", "亨，利贞", "小有过越"),
+        
+        # 离宫八卦
+        (5, 1): ("火天大有", "元亨", "大有所获"),
+        (5, 2): ("火泽睽", "二女同居", "志不同行"),
+        (5, 3): ("火雷噬嗑", "亨。利用狱", "刑罚之道"),
+        (5, 4): ("火风鼎", "元吉，亨", "鼎新之道"),
+        (5, 5): ("离为火", "利贞，亨。畜牝牛吉", "依附光明"),
+        (5, 6): ("火山旅", "小亨，旅贞吉", "旅行之道"),
+        (5, 7): ("雷火丰", "亨，王假之，勿忧", "丰盛之时"),
+        (5, 8): ("风火家人", "利女贞", "家庭之道"),
+        
+        # 坎宫八卦
+        (6, 1): ("水天需", "有孚，光亨，贞吉", "等待时机"),
+        (6, 2): ("水泽节", "亨。苦节不可贞", "节制之道"),
+        (6, 3): ("水雷屯", "云雷屯", "始生之难"),
+        (6, 4): ("水火既济", "亨小，利贞", "事成守正"),
+        (6, 5): ("泽火革", "己日乃孚，元亨利贞", "变革之道"),
+        (6, 6): ("坎为水", "习坎，有孚，维心亨", "险陷重重"),
+        (6, 7): ("地火明夷", "利艰贞", "光明受损"),
+        (6, 8): ("地水师", "贞，丈人吉，无咎", "统率之道"),
+        
+        # 兑宫八卦
+        (7, 1): ("泽天夬", "扬于王庭，孚号有厉", "决断之道"),
+        (7, 2): ("泽雷随", "元亨利贞，无咎", "随从之道"),
+        (7, 3): ("泽火革", "己日乃孚，元亨利贞", "变革之道"),
+        (7, 4): ("泽风大过", "栋桡，利有攸往，亨", "非常行动"),
+        (7, 5): ("雷泽归妹", "征凶，无攸利", "婚嫁之道"),
+        (7, 6): ("火泽睽", "二女同居", "志不同行"),
+        (7, 7): ("兑为泽", "亨，利贞", "喜悦之道"),
+        (7, 8): ("天泽履", "履虎尾，不咥人，亨", "谨慎行事"),
+        
+        # 巽宫八卦
+        (8, 1): ("风天小畜", "风行天上", "小有积蓄"),
+        (8, 2): ("风雷益", "利有攸往，利涉大川", "增益之道"),
+        (8, 3): ("风火家人", "利女贞", "家庭之道"),
+        (8, 4): ("风泽中孚", "豚鱼吉，利涉大川", "诚信之道"),
+        (8, 5): ("天风姤", "女壮，勿用取女", "遇合之道"),
+        (8, 6): ("火风鼎", "元吉，亨", "鼎新之道"),
+        (8, 7): ("山水蒙", "山下出泉", "启蒙奋发"),
+        (8, 8): ("巽为风", "小亨，利有攸往", "顺从之道"),
+    }
+    
+    DIVINATION_METHODS = ["feature", "coin", "time", "random"]
+    
+    def __init__(self, lower_id, upper_id, method="feature"):
+        """初始化卦象，增强错误处理"""
+        try:
+            self.lower_id = min(max(1, lower_id), 8)
+            self.upper_id = min(max(1, upper_id), 8)
+            self.method = method if method in self.DIVINATION_METHODS else "feature"
+            self.name, self.description, self.key = self._get_hexagram_info()
+            self.changing_lines = []  # 存储变爻信息 (位置, 类型)
+            self.timestamp = datetime.now()
+            self.elemental_analysis = self._elemental_analysis()
+        except Exception as e:
+            print(f"卦象初始化失败: {e}")
+            # 默认卦象
+            self.lower_id = 1
+            self.upper_id = 1
+            self.method = "feature"
+            self.name, self.description, self.key = ("乾为天", "元亨利贞", "刚健中正")
+            self.changing_lines = []
+            self.timestamp = datetime.now()
+            self.elemental_analysis = "无法进行五行分析"
+        
+    def _get_hexagram_info(self):
+        """获取卦象信息，增强健壮性"""
+        try:
+            return self.HEXAGRAM_DB.get(
+                (self.lower_id, self.upper_id), 
+                ("未济", "物不可穷也", "审慎进取")
+            )
+        except:
+            return ("未济", "物不可穷也", "审慎进取")
+    
+    def _elemental_analysis(self):
+        """五行属性分析，增强健壮性"""
+        try:
+            lower_trigram = Trigram.get_trigram(self.lower_id)
+            upper_trigram = Trigram.get_trigram(self.upper_id)
+            
+            if not lower_trigram or not upper_trigram:
+                return "无法分析五行属性"
+            
+            # 相生相克关系
+            generate_map = {"木": "火", "火": "土", "土": "金", "金": "水", "水": "木"}
+            overcome_map = {"木": "土", "土": "水", "水": "火", "火": "金", "金": "木"}
+            
+            lower_element = lower_trigram[4]
+            upper_element = upper_trigram[4]
+            
+            analysis = f"本卦五行: 下卦({lower_element}), 上卦({upper_element})\n"
+            
+            if generate_map.get(lower_element) == upper_element:
+                analysis += "下卦生上卦: 吉，表示基础支持发展"
+            elif generate_map.get(upper_element) == lower_element:
+                analysis += "上卦生下卦: 吉，表示外部环境有利"
+            elif overcome_map.get(lower_element) == upper_element:
+                analysis += "下卦克上卦: 凶，表示内部阻碍外部发展"
+            elif overcome_map.get(upper_element) == lower_element:
+                analysis += "上卦克下卦: 凶，表示外部压力大"
+            else:
+                analysis += "五行相平: 中性，需看具体卦象"
+            
+            return analysis
+        except Exception as e:
+            print(f"五行分析失败: {e}")
+            return "无法进行五行分析"
+    
+    def cast_changing_lines(self, event_signature=None, method=None):
+        """基于不同方法生成变爻，增强健壮性"""
+        try:
+            self.changing_lines = []
+            method = method or self.method
+            
+            if method == "feature" and event_signature:
+                # 使用事件特征哈希生成确定性变爻
+                try:
+                    event_hash = hashlib.sha256(event_signature.encode()).hexdigest()
+                    hex_hash = int(event_hash[:8], 16)  # 取前8位作为哈希值
+                    
+                    for i in range(6):
+                        if (hex_hash >> i) & 1:  # 根据哈希位决定是否变爻
+                            # 确定爻位和类型
+                            line_type = "老阳" if (hex_hash >> (i+6)) & 1 else "老阴"
+                            self.changing_lines.append((6-i, line_type))
+                except Exception as e:
+                    print(f"特征起卦法失败: {e}")
+                    self._cast_random_lines()
+                    
+            elif method == "coin":
+                # 金钱卦法（三枚硬币）
+                try:
+                    for i in range(6):
+                        # 模拟三枚硬币投掷（0=反面, 1=正面）
+                        coins = [random.randint(0, 1) for _ in range(3)]
+                        total = sum(coins)
+                        
+                        # 0=老阴, 1=少阴, 2=少阳, 3=老阳
+                        if total == 0:
+                            self.changing_lines.append((6-i, "老阴"))
+                        elif total == 3:
+                            self.changing_lines.append((6-i, "老阳"))
+                except Exception as e:
+                    print(f"金钱起卦法失败: {e}")
+                    self._cast_random_lines()
+                    
+            elif method == "random" or method == "time":
+                # 完全随机变爻或基于时间
+                self._cast_random_lines()
+        except Exception as e:
+            print(f"生成变爻失败: {e}")
+            self.changing_lines = []
+    
+    def _cast_random_lines(self):
+        """随机生成变爻，增强健壮性"""
+        try:
+            now = datetime.now()
+            random.seed(now.microsecond)  # 使用微秒作为种子
+            
+            for i in range(6):
+                if random.random() < 0.25:  # 25%概率变爻
+                    line_type = "老阳" if random.random() < 0.5 else "老阴"
+                    self.changing_lines.append((6-i, line_type))
+        except Exception as e:
+            print(f"随机生成变爻失败: {e}")
+            self.changing_lines = []
+    
+    def get_changing_hexagram(self):
+        """获取变卦（符合易经原理），增强健壮性"""
+        if not self.changing_lines:
+            return None
+            
+        try:
+            # 创建上下卦的初始二进制表示（阳爻为1，阴爻为0）
+            lower_binary = bin(self.lower_id - 1)[2:].zfill(3)
+            upper_binary = bin(self.upper_id - 1)[2:].zfill(3)
+            
+            # 组合成完整的六爻二进制表示（从上到下）
+            hexagram_binary = upper_binary + lower_binary
+            
+            # 将二进制转换为爻列表（0=阴，1=阳）
+            lines = [int(bit) for bit in hexagram_binary]
+            
+            # 应用变爻：老阴变阳，老阳变阴
+            for pos, line_type in self.changing_lines:
+                # 位置从1开始（最上面为1），索引从0开始（最上面为0）
+                idx = pos - 1
+                if line_type == "老阴":
+                    lines[idx] = 1  # 阴变阳
+                elif line_type == "老阳":
+                    lines[idx] = 0  # 阳变阴
+            
+            # 重新分割为上下卦
+            new_upper_binary = ''.join(str(bit) for bit in lines[:3])
+            new_lower_binary = ''.join(str(bit) for bit in lines[3:])
+            
+            # 转换为卦ID（1-8）
+            new_upper_id = int(new_upper_binary, 2) + 1
+            new_lower_id = int(new_lower_binary, 2) + 1
+            
+            # 确保ID在有效范围内
+            new_upper_id = min(max(1, new_upper_id), 8)
+            new_lower_id = min(max(1, new_lower_id), 8)
+            
+            return Hexagram(new_lower_id, new_upper_id, self.method)
+        except Exception as e:
+            print(f"获取变卦失败: {e}")
+            return None
+    
+    def visualize(self, filename=None, show_animation=False):
+        """可视化卦象（增强版），增强错误处理"""
+        try:
+            # 获取上下卦的二进制表示
+            lower_bin = bin(self.lower_id - 1)[2:].zfill(3)
+            upper_bin = bin(self.upper_id - 1)[2:].zfill(3)
+            all_lines = list(upper_bin) + list(lower_bin)  # 从顶部开始
+            
+            # 创建图形
+            fig, ax = plt.subplots(figsize=(5, 8))
+            ax.set_title(f"{self.name}\n{self.key}", 
+                        fontproperties=font, fontsize=14, color='darkred')
+            ax.set_xlim(0, 1)
+            ax.set_ylim(0, 7)
+            ax.axis('off')
+            
+            # 绘制背景
+            ax.add_patch(plt.Rectangle((0, 0), 1, 7, color='#FFF8E7', alpha=0.7))
+            
+            # 绘制爻线
+            lines_artists = []
+            for i, line in enumerate(all_lines):
+                y_pos = 6.5 - i
+                if line == '1':  # 阳爻
+                    artist = ax.hlines(y=y_pos, xmin=0.2, xmax=0.8, 
+                                      linewidth=6, color='#2c3e50', solid_capstyle='round')
+                else:  # 阴爻
+                    artist = ax.hlines(y=y_pos, xmin=0.2, xmax=0.35, 
+                                      linewidth=6, color='#2c3e50', solid_capstyle='round')
+                    artist2 = ax.hlines(y=y_pos, xmin=0.65, xmax=0.8, 
+                                       linewidth=6, color='#2c3e50', solid_capstyle='round')
+                    lines_artists.append(artist)
+                    lines_artists.append(artist2)
+                    continue
+                
+                lines_artists.append(artist)
+            
+            # 标记变爻
+            markers = []
+            for i, line in enumerate(all_lines):
+                y_pos = 6.5 - i
+                if any(pos == (i+1) for pos, _ in self.changing_lines):
+                    marker = "○" if line == '1' else "×"
+                    artist = ax.text(0.5, y_pos, marker, 
+                            ha='center', va='center', fontsize=24, 
+                            color='#e74c3c', alpha=0.9, fontweight='bold')
+                    markers.append(artist)
+            
+            # 添加卦辞
+            plt.figtext(0.5, 0.02, self.description, 
+                        ha='center', fontproperties=font, fontsize=10, color='darkblue')
+            
+            # 添加五行信息
+            plt.figtext(0.5, 0.08, f"五行分析: {self.elemental_analysis}", 
+                        ha='center', fontproperties=font, fontsize=8, color='#27ae60')
+            
+            # 动画效果：卦象形成过程
+            ani = None
+            if show_animation:
+                try:
+                    def init():
+                        for artist in lines_artists + markers:
+                            artist.set_alpha(0)
+                        return lines_artists + markers
+                    
+                    def animate(frame):
+                        idx = frame // 3
+                        alpha = min(1.0, (frame % 3) * 0.4)
+                        
+                        if idx < len(lines_artists):
+                            lines_artists[idx].set_alpha(alpha)
+                        if frame >= 18 and (frame - 18) < len(markers):
+                            markers[frame - 18].set_alpha(1.0)
+                        
+                        return lines_artists + markers
+                    
+                    ani = FuncAnimation(fig, animate, frames=24, 
+                                       init_func=init, blit=True, interval=120)
+                except Exception as e:
+                    print(f"动画生成失败: {e}")
+            
+            if filename:
+                try:
+                    plt.savefig(filename, bbox_inches='tight', dpi=120)
+                    print(f"卦象已保存为: {filename}")
+                except Exception as e:
+                    print(f"保存图像失败: {e}")
+            
+            plt.tight_layout()
+            plt.show()
+            return ani if show_animation else None
+        except Exception as e:
+            print(f"卦象可视化失败: {e}")
+            return None
+    
+    def __str__(self):
+        try:
+            lower_trigram = Trigram.get_trigram(self.lower_id)
+            upper_trigram = Trigram.get_trigram(self.upper_id)
+            if lower_trigram and upper_trigram:
+                return (f"{self.name} ({upper_trigram[1]}上{lower_trigram[1]}下)\n"
+                        f"卦辞: {self.description}\n"
+                        f"要义: {self.key}\n"
+                        f"起卦方法: {self.method}")
+            return f"{self.name}\n卦辞: {self.description}\n要义: {self.key}"
+        except:
+            return f"{self.name}\n卦辞: {self.description}\n要义: {self.key}"
+    
+    def to_dict(self):
+        """转换为字典格式，增强健壮性"""
+        try:
+            return {
+                "lower": self.lower_id,
+                "upper": self.upper_id,
+                "name": self.name,
+                "description": self.description,
+                "key": self.key,
+                "method": self.method,
+                "changing_lines": self.changing_lines,
+                "timestamp": self.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
+                "elemental_analysis": self.elemental_analysis
+            }
+        except:
+            return {
+                "lower": self.lower_id,
+                "upper": self.upper_id,
+                "name": self.name,
+                "description": self.description,
+                "key": self.key,
+                "method": self.method,
+                "changing_lines": [],
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "elemental_analysis": "无法获取五行分析"
+            }
+
+# ========== 历史卦象数据库 - 增强版 ==========
+class HexagramDatabase:
+    """卦象数据库管理类，负责存储和检索预测记录，使用上下文管理器确保资源释放"""
+    def __init__(self, db_path="hexagram_history.db"):
+        self.db_path = db_path
+        self.conn = None
+        self._connect()
+        self._init_ml_model()
+        
+    def _connect(self):
+        """连接数据库，增强错误处理"""
+        try:
+            self.conn = sqlite3.connect(self.db_path)
+            self.conn.row_factory = sqlite3.Row  # 允许按列名访问
+            self._create_tables()
+        except sqlite3.Error as e:
+            print(f"数据库连接失败: {e}")
+            # 尝试创建内存数据库作为后备
+            try:
+                print("尝试使用内存数据库...")
+                self.conn = sqlite3.connect(":memory:")
+                self.conn.row_factory = sqlite3.Row
+                self._create_tables()
+            except sqlite3.Error as e:
+                print(f"内存数据库也失败: {e}")
+                self.conn = None
+    
+    def _create_tables(self):
+        """创建数据库表，增强健壮性"""
+        if not self.conn:
+            return
+            
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                description TEXT,
+                signature TEXT,
+                hexagram_data TEXT NOT NULL,
+                accuracy REAL DEFAULT 0.0,
+                verified BOOLEAN DEFAULT 0,
+                outcome TEXT,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+            """)
+            
+            # 添加事件类型分类
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS event_categories (
+                event_id INTEGER,
+                category TEXT,
+                FOREIGN KEY(event_id) REFERENCES events(id)
+            )
+            """)
+            
+            # 添加索引以提高查询性能
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_signature ON events(signature)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_timestamp ON events(timestamp)")
+            
+            self.conn.commit()
+        except sqlite3.Error as e:
+            print(f"数据库表创建失败: {e}")
+    
+    def _init_ml_model(self):
+        """初始化机器学习模型，增强健壮性"""
+        try:
+            self.model = RandomForestClassifier(n_estimators=100, random_state=42)
+            self.model_trained = False
+        except Exception as e:
+            print(f"机器学习模型初始化失败: {e}")
+            self.model = None
+            self.model_trained = False
+    
+    def train_prediction_model(self):
+        """训练预测准确性的机器学习模型，增强健壮性"""
+        if not self.conn:
+            print("数据库未连接，无法训练模型")
+            return False
+            
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute("""
+            SELECT hexagram_data, accuracy 
+            FROM events 
+            WHERE verified=1 AND accuracy IS NOT NULL
+            """)
+            
+            data = []
+            targets = []
+            for row in cursor.fetchall():
+                try:
+                    hex_data = json.loads(row['hexagram_data'])
+                    accuracy = row['accuracy']
+                    
+                    # 特征工程
+                    features = [
+                        hex_data['lower'],
+                        hex_data['upper'],
+                        len(hex_data.get('changing_lines', []))
+                    ]
+                    
+                    # 添加变爻位置特征
+                    changing_pos = [0] * 6
+                    for pos, _ in hex_data.get('changing_lines', []):
+                        if 1 <= pos <= 6:
+                            changing_pos[pos-1] = 1
+                    features.extend(changing_pos)
+                    
+                    data.append(features)
+                    targets.append(1 if accuracy >= 0.8 else 0)  # 二分类
+                except Exception as e:
+                    print(f"数据处理错误: {e}")
+                    continue
+            
+            if len(data) < 10:
+                print("警告：数据量不足，无法训练模型")
+                return False
+                
+            X = np.array(data)
+            y = np.array(targets)
+            
+            # 训练模型
+            X_train, X_test, y_train, y_test = train_test_split(
+                X, y, test_size=0.2, random_state=42
+            )
+            
+            self.model.fit(X_train, y_train)
+            
+            # 评估模型
+            y_pred = self.model.predict(X_test)
+            acc = accuracy_score(y_test, y_pred)
+            print(f"模型训练完成，测试准确率: {acc:.2%}")
+            self.model_trained = True
+            return True
+        except Exception as e:
+            print(f"模型训练错误: {e}")
+            return False
+    
+    def predict_accuracy(self, hexagram):
+        """预测当前卦象的准确性，增强健壮性"""
+        if not self.model_trained or not self.model:
+            return None
+            
+        try:
+            hex_data = hexagram.to_dict()
+            
+            # 准备特征
+            features = [
+                hex_data['lower'],
+                hex_data['upper'],
+                len(hex_data.get('changing_lines', []))
+            ]
+            
+            # 添加变爻位置特征
+            changing_pos = [0] * 6
+            for pos, _ in hex_data.get('changing_lines', []):
+                if 1 <= pos <= 6:
+                    changing_pos[pos-1] = 1
+            features.extend(changing_pos)
+            
+            # 预测
+            proba = self.model.predict_proba([features])[0]
+            return proba[1]  # 返回高准确率的概率
+        except Exception as e:
+            print(f"准确率预测失败: {e}")
+            return None
+    
+    def add_event(self, name, description, hexagram, signature, outcome=None):
+        """添加事件到数据库，增强健壮性"""
+        if not self.conn:
+            print("数据库未连接，无法添加事件")
+            return None
+            
+        try:
+            cursor = self.conn.cursor()
+            hexagram_data = json.dumps(hexagram.to_dict())
+            
+            # 检查是否已存在相同特征的事件
+            cursor.execute("SELECT id FROM events WHERE signature=?", (signature,))
+            existing = cursor.fetchone()
+            
+            if existing:
+                event_id = existing['id']
+                # 更新现有记录
+                cursor.execute("""
+                UPDATE events 
+                SET hexagram_data=?, outcome=?
+                WHERE id=?
+                """, (hexagram_data, outcome, event_id))
+            else:
+                # 插入新记录
+                cursor.execute("""
+                INSERT INTO events (name, description, signature, hexagram_data, outcome)
+                VALUES (?, ?, ?, ?, ?)
+                """, (name, description, signature, hexagram_data, outcome))
+                event_id = cursor.lastrowid
+            
+            self.conn.commit()
+            return event_id
+        except sqlite3.Error as e:
+            print(f"数据库错误: {e}")
+            if self.conn:
+                self.conn.rollback()
+            return None
+        except Exception as e:
+            print(f"添加事件失败: {e}")
+            return None
+    
+    def verify_prediction(self, event_id, actual_outcome, similarity):
+        """验证预测准确性，增强健壮性"""
+        if not self.conn:
+            print("数据库未连接，无法验证预测")
+            return False
+            
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute("""
+            UPDATE events 
+            SET accuracy=?, verified=1, outcome=?
+            WHERE id=?
+            """, (similarity, actual_outcome, event_id))
+            self.conn.commit()
+            return True
+        except sqlite3.Error as e:
+            print(f"验证预测错误: {e}")
+            if self.conn:
+                self.conn.rollback()
+            return False
+        except Exception as e:
+            print(f"验证预测失败: {e}")
+            return False
+    
+    def find_similar_hexagrams(self, hexagram_dict, threshold=0.7):
+        """查找相似卦象的历史事件，增强健壮性"""
+        if not self.conn:
+            print("数据库未连接，无法查找相似卦象")
+            return []
+            
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute("SELECT id, name, description, hexagram_data, accuracy, outcome FROM events WHERE verified=1")
+            similar_events = []
+            
+            for row in cursor.fetchall():
+                try:
+                    event_id = row['id']
+                    name = row['name']
+                    desc = row['description']
+                    hex_data = json.loads(row['hexagram_data'])
+                    accuracy = row['accuracy']
+                    outcome = row['outcome']
+                    
+                    # 计算卦象相似度
+                    sim = self.calculate_similarity(hexagram_dict, hex_data)
+                    if sim >= threshold:
+                        similar_events.append({
+                            "id": event_id,
+                            "name": name,
+                            "description": desc,
+                            "similarity": sim,
+                            "accuracy": accuracy if accuracy else 0.0,
+                            "outcome": outcome if outcome else "未知",
+                            "hexagram": hex_data
+                        })
+                except Exception as e:
+                    print(f"处理相似事件错误: {e}")
+                    continue
+            
+            # 按相似度降序排序
+            similar_events.sort(key=lambda x: x["similarity"], reverse=True)
+            return similar_events
+        except sqlite3.Error as e:
+            print(f"查找相似卦象错误: {e}")
+            return []
+        except Exception as e:
+            print(f"查找相似卦象失败: {e}")
+            return []
+    
+    def calculate_similarity(self, hexagram1, hexagram2):
+        """计算两个卦象的相似度，增强健壮性"""
+        try:
+            # 基础卦象相似度
+            base_sim = 1.0 if (hexagram1['lower'] == hexagram2['lower'] and 
+                              hexagram1['upper'] == hexagram2['upper']) else 0.6
+            
+            # 变爻相似度
+            lines1 = set(pos for pos, _ in hexagram1.get('changing_lines', []))
+            lines2 = set(pos for pos, _ in hexagram2.get('changing_lines', []))
+            
+            if not lines1 and not lines2:
+                changing_sim = 1.0
+            else:
+                intersection = lines1 & lines2
+                union = lines1 | lines2
+                changing_sim = len(intersection) / len(union) if union else 0.0
+            
+            # 综合相似度
+            total_sim = 0.7 * base_sim + 0.3 * changing_sim
+            return min(1.0, max(0.0, total_sim))
+        except Exception as e:
+            print(f"相似度计算失败: {e}")
+            return 0.0
+    
+    def get_historical_accuracy(self):
+        """获取历史预测准确率，增强健壮性"""
+        if not self.conn:
+            print("数据库未连接，无法获取历史准确率")
+            return 0.0
+            
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute("SELECT AVG(accuracy) FROM events WHERE verified=1")
+            result = cursor.fetchone()
+            return result[0] or 0.0
+        except sqlite3.Error as e:
+            print(f"获取历史准确率错误: {e}")
+            return 0.0
+        except Exception as e:
+            print(f"获取历史准确率失败: {e}")
+            return 0.0
+    
+    def visualize_accuracy_trend(self):
+        """可视化准确率趋势，增强健壮性"""
+        if not self.conn:
+            print("数据库未连接，无法可视化准确率趋势")
+            return
+            
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute("""
+            SELECT timestamp, accuracy 
+            FROM events 
+            WHERE verified=1 AND accuracy IS NOT NULL
+            ORDER BY timestamp
+            """)
+            
+            dates = []
+            accuracies = []
+            for row in cursor.fetchall():
+                try:
+                    # 处理时间戳
+                    timestamp = row['timestamp']
+                    if isinstance(timestamp, str):
+                        try:
+                            dt = datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S")
+                        except:
+                            try:
+                                dt = datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S.%f")
+                            except:
+                                continue
+                    else:
+                        dt = datetime.fromisoformat(timestamp)
+                    
+                    dates.append(dt)
+                    accuracies.append(row['accuracy'])
+                except:
+                    continue
+            
+            if len(dates) < 2:
+                print("无足够数据进行可视化")
+                return
+                
+            plt.figure(figsize=(12, 6))
+            
+            # 原始数据
+            plt.plot(dates, accuracies, 'o-', markersize=4, alpha=0.5, label='原始数据')
+            
+            # 设置日期格式
+            plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
+            plt.gca().xaxis.set_major_locator(mdates.MonthLocator(interval=max(1, len(dates)//12)))
+            
+            plt.title('历史卦象预测准确率趋势', fontproperties=font)
+            plt.xlabel('日期', fontproperties=font)
+            plt.ylabel('准确率', fontproperties=font)
+            plt.ylim(0.0, 1.05)
+            plt.grid(True, linestyle='--', alpha=0.7)
+            plt.legend(prop=font, loc='best')
+            
+            # 自动调整布局和旋转日期标签
+            plt.gcf().autofmt_xdate(rotation=45)
+            plt.tight_layout()
+            
+            # 保存图像
+            filename = f"accuracy_trend_{datetime.now().strftime('%Y%m%d')}.png"
+            plt.savefig(filename, dpi=120)
+            print(f"准确率趋势图已保存为: {filename}")
+            plt.show()
+        except Exception as e:
+            print(f"准确率趋势可视化错误: {e}")
+    
+    def close(self):
+        """关闭数据库连接，增强健壮性"""
+        try:
+            if self.conn:
+                self.conn.close()
+                print("数据库连接已关闭")
+        except:
+            pass
+
+# ========== 卦象预测引擎 - 增强版 ==========
+class HexagramPredictor:
+    """卦象预测引擎，核心预测功能，使用上下文管理器确保资源释放"""
+    def __init__(self, db_path="hexagram_history.db"):
+        self.db = HexagramDatabase(db_path)
+        self.accuracy = self.db.get_historical_accuracy() if self.db else 0.0
+        self.interactive_mode = False
+        
+    def __enter__(self):
+        return self
+        
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+    
+    def set_interactive_mode(self, enabled=True):
+        """设置交互模式"""
+        self.interactive_mode = enabled
+        
+    def predict_hexagram(self, event_name, event_description, method="feature"):
+        """预测事件的卦象，增强健壮性"""
+        # 生成事件特征签名
+        signature = self._generate_signature(event_name, event_description)
+        
+        # 生成卦象
+        try:
+            lower_id, upper_id = self._generate_trigram_ids(signature, method)
+            hexagram = Hexagram(lower_id, upper_id, method)
+            
+            # 生成变爻
+            hexagram.cast_changing_lines(signature, method)
+            
+            # 存储到数据库
+            event_id = self.db.add_event(event_name, event_description, hexagram, signature) if self.db else None
+            
+            # 查找相似历史事件
+            similar_events = self.db.find_similar_hexagrams(hexagram.to_dict()) if self.db else []
+            
+            # 使用ML模型预测准确率
+            accuracy_prediction = self.db.predict_accuracy(hexagram) if self.db else None
+            
+            return {
+                "event_id": event_id,
+                "event_name": event_name,
+                "event_description": event_description,
+                "hexagram": hexagram,
+                "similar_events": similar_events,
+                "historical_accuracy": self.accuracy,
+                "predicted_accuracy": accuracy_prediction
+            }
+        except Exception as e:
+            print(f"预测失败: {e}")
+            # 返回默认预测结果
+            default_hexagram = Hexagram(1, 1)
+            return {
+                "event_id": None,
+                "event_name": event_name,
+                "event_description": event_description,
+                "hexagram": default_hexagram,
+                "similar_events": [],
+                "historical_accuracy": self.accuracy,
+                "predicted_accuracy": None
+            }
+    
+    def _generate_signature(self, name, description):
+        """生成事件特征签名（语义感知），增强健壮性"""
+        # 提取关键词作为签名基础
+        try:
+            if not name and not description:
+                return hashlib.sha256(str(time.time()).encode()).hexdigest()
+                
+            keywords = self._extract_keywords(f"{name} {description}")
+            combined = "|".join(sorted(keywords))
+            return hashlib.sha256(combined.encode()).hexdigest()
+        except:
+            return hashlib.sha256(f"{name}{description}".encode()).hexdigest()
+
+    def _extract_keywords(self, text, top_n=5):
+        """提取文本关键词（简单实现），增强健壮性"""
+        try:
+            if not text:
+                return ["default"]
+                
+            # 清洗文本
+            text = re.sub(r'[^\w\s]', '', text)  # 移除标点
+            
+            # 分词并计数
+            words = text.split()
+            word_count = Counter(words)
+            
+            # 移除短词
+            filtered_words = {word: count for word, count in word_count.items() if len(word) > 1}
+            
+            # 按频率排序取前top_n个
+            sorted_words = sorted(filtered_words.items(), key=lambda x: x[1], reverse=True)
+            return [word for word, count in sorted_words[:top_n]]
+        except:
+            return [text[:min(10, len(text))] if text else ["default"]
+    
+    def _generate_trigram_ids(self, signature, method):
+        """从特征签名生成卦象ID，增强健壮性"""
+        if method in ["coin", "random", "time"]:
+            # 对于非特征方法，使用随机生成
+            return random.randint(1, 8), random.randint(1, 8)
+            
+        try:
+            # 将签名转换为数字序列
+            hash_int = int(signature[:16], 16)  # 取前16个字符
+            
+            # 生成下卦ID (1-8)
+            lower_id = (hash_int % 8) + 1
+            if lower_id > 8: 
+                lower_id = 1
+            
+            # 生成上卦ID (1-8)
+            upper_id = ((hash_int // 8) % 8) + 1
+            if upper_id > 8: 
+                upper_id = 1
+            
+            return lower_id, upper_id
+        except:
+            # 如果特征方法失败，使用随机方法
+            return random.randint(1, 8), random.randint(1, 8)
+    
+    def verify_prediction(self, event_id, actual_outcome, similarity_score):
+        """验证预测准确性，增强健壮性"""
+        if event_id is None or not self.db:
+            print("无法验证预测结果")
+            return False
+            
+        try:
+            similarity_score = max(0.0, min(1.0, similarity_score))  # 确保在0-1范围内
+            success = self.db.verify_prediction(event_id, actual_outcome, similarity_score)
+            if success:
+                # 更新准确率缓存
+                self.accuracy = self.db.get_historical_accuracy()
+            return success
+        except Exception as e:
+            print(f"验证预测失败: {e}")
+            return False
+    
+    def get_historical_analysis(self, event_name):
+        """获取历史相似事件分析报告，增强健壮性"""
+        if not self.db or not self.db.conn:
+            print("数据库未连接，无法获取历史分析")
+            return None
+            
+        try:
+            cursor = self.db.conn.cursor()
+            cursor.execute("""
+            SELECT hexagram_data 
+            FROM events 
+            WHERE name=? 
+            ORDER BY timestamp DESC 
+            LIMIT 1
+            """, (event_name,))
+            
+            result = cursor.fetchone()
+            if not result:
+                return None
+                
+            hex_data = json.loads(result['hexagram_data'])
+            hexagram = Hexagram(hex_data["lower"], hex_data["upper"])
+            similar_events = self.db.find_similar_hexagrams(hex_data)
+            
+            return {
+                "hexagram": hexagram,
+                "similar_events": similar_events
+            }
+        except Exception as e:
+            print(f"获取历史分析失败: {e}")
+            return None
+    
+    def interpret_prediction(self, prediction):
+        """解释预测结果，增强健壮性和用户体验"""
+        if prediction is None:
+            print("预测结果无效")
+            return
+            
+        hexagram = prediction.get('hexagram')
+        if hexagram is None:
+            print("卦象信息缺失")
+            return
+            
+        changing = hexagram.get_changing_hexagram() if hexagram else None
+        
+        print("\n" + "="*60)
+        print(f"事件: {prediction.get('event_name', '未命名事件')}")
+        print(f"描述: {prediction.get('event_description', '无描述')}")
+        print(f"时间: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+        print("="*60)
+        
+        # 显示主卦
+        print(f"\n主卦: {hexagram.name}")
+        print(f"卦辞: {hexagram.description}")
+        print(f"要义: {hexagram.key}")
+        print(f"五行分析: {hexagram.elemental_analysis}")
+        
+        # 显示变爻
+        if hexagram.changing_lines:
+            print("\n变爻信息:")
+            for pos, type in hexagram.changing_lines:
+                print(f"  第{pos}爻: {type}")
+            
+            # 显示变卦
+            if changing:
+                print(f"\n变卦: {changing.name}")
+                print(f"卦辞: {changing.description}")
+                print(f"要义: {changing.key}")
+                
+                # 变卦解释
+                print("\n变卦解读:")
+                if "吉" in changing.key or "亨" in changing.key or "利" in changing.key:
+                    print("  变卦显示积极信号，预示事情可能向好的方向发展")
+                elif "凶" in changing.key or "咎" in changing.key or "厉" in changing.key:
+                    print("  变卦显示潜在风险，需谨慎行事")
+                else:
+                    print("  变卦显示中性趋势，需结合具体情况分析")
+        else:
+            print("\n无变爻信息")
+        
+        # 显示相似历史事件
+        similar_events = prediction.get('similar_events', [])
+        if similar_events:
+            print("\n相似历史事件分析:")
+            for i, event in enumerate(similar_events[:3]):  # 显示前3个
+                print(f"  {i+1}. {event['name']} (相似度: {event['similarity']:.2%})")
+                print(f"     结果: {event.get('outcome', '未知')}")
+                print(f"     准确率: {event.get('accuracy', 0.0):.2%}")
+                print(f"     描述: {event.get('description', '无描述')[:50]}...")
+        else:
+            print("\n未找到相似历史事件")
+        
+        # 总体建议
+        print("\n行动建议:")
+        try:
+            if any(keyword in hexagram.key for keyword in ["吉", "亨", "利"]) or \
+               (changing and any(keyword in changing.key for keyword in ["吉", "亨", "利"])):
+                print("  当前卦象显示有利趋势，可积极行动，把握机会")
+            elif any(keyword in hexagram.key for keyword in ["凶", "咎", "厉"]) or \
+                 (changing and any(keyword in changing.key for keyword in ["凶", "咎", "厉"])):
+                print("  当前卦象显示不利趋势，建议谨慎行事，规避风险")
+            else:
+                print("  卦象显示中性趋势，需结合具体情况决策，保持灵活")
+        except:
+            print("  无法提供具体行动建议，请参考卦辞和要义")
+        
+        # 可视化卦象
+        try:
+            img_file = f"hexagram_{datetime.now().strftime('%Y%m%d%H%M')}.png"
+            hexagram.visualize(filename=img_file, show_animation=False)
+        except:
+            print("\n卦象可视化失败")
+        
+        print(f"\n历史预测准确率: {prediction.get('historical_accuracy', 0.0)*100:.2f}%")
+        if prediction.get('predicted_accuracy'):
+            print(f"模型预测准确率: {prediction['predicted_accuracy']*100:.2f}%")
+    
+    def interactive_predict(self):
+        """交互式预测，增强用户体验和健壮性"""
+        print("\n===== 易经预测系统 - 交互模式 =====")
+        
+        # 获取事件名称
+        event_name = input("请输入事件名称: ").strip()
+        while not event_name:
+            print("事件名称不能为空，请重新输入")
+            event_name = input("请输入事件名称: ").strip()
+        
+        # 获取事件描述
+        event_description = input("请输入事件描述: ").strip()
+        if not event_description:
+            print("事件描述为空，将仅使用事件名称")
+        
+        # 选择起卦方法
+        print("\n请选择起卦方法:")
+        print("1. 特征起卦 (基于事件特征)")
+        print("2. 金钱卦 (传统三枚硬币法)")
+        print("3. 时间卦 (基于当前时间)")
+        print("4. 随机卦")
+        
+        choice = input("请选择 (1-4, 默认为1): ").strip() or "1"
+        while choice not in ['1', '2', '3', '4']:
+            print("无效选择，请重新输入")
+            choice = input("请选择 (1-4, 默认为1): ").strip() or "1"
+        
+        methods = {"1": "feature", "2": "coin", "3": "time", "4": "random"}
+        method = methods[choice]
+        
+        print(f"\n使用 {method} 方法进行预测...")
+        prediction = self.predict_hexagram(event_name, event_description, method)
+        
+        if prediction:
+            self.interpret_prediction(prediction)
+            
+            # 询问是否保存报告
+            save_report = input("\n是否保存预测报告? (y/n): ").strip().lower()
+            if save_report == 'y':
+                filename = input("输入文件名 (默认为 '易经预测报告'): ").strip() or "易经预测报告"
+                try:
+                    report_file = self.save_report(prediction, filename)
+                    if report_file:
+                        print(f"报告已保存为 {report_file}")
+                    else:
+                        print("报告保存失败")
+                except Exception as e:
+                    print(f"报告保存失败: {e}")
+            
+            # 询问是否验证预测
+            verify = input("\n是否验证预测结果? (y/n): ").strip().lower()
+            if verify == 'y':
+                outcome = input("请输入实际结果: ").strip()
+                if not outcome:
+                    print("未输入结果，跳过验证")
+                else:
+                    similarity_input = input("请输入相似度评分 (0.0-1.0, 默认为0.8): ").strip() or "0.8"
+                    try:
+                        similarity = float(similarity_input)
+                        if self.verify_prediction(prediction['event_id'], outcome, similarity):
+                            print("预测结果已记录!")
+                        else:
+                            print("验证结果记录失败")
+                    except ValueError:
+                        print("无效的相似度评分，应为0.0到1.0之间的数字")
+        
+        print("\n预测完成!")
+    
+    def save_report(self, prediction, filename="易经预测报告"):
+        """保存预测结果为HTML报告，增强健壮性和美观度"""
+        if not prediction:
+            return "无法生成报告：预测结果无效"
+            
+        hexagram = prediction.get('hexagram')
+        if hexagram is None:
+            return "无法生成报告：卦象信息缺失"
+            
+        changing = hexagram.get_changing_hexagram() if hexagram else None
+        
+        # 生成卦象图片
+        img_path = f"temp_{datetime.now().strftime('%Y%m%d%H%M%S')}.png"
+        hexagram.visualize(img_path, show_animation=False)
+        
+        # 读取图片为base64
+        img_data = ""
+        try:
+            if os.path.exists(img_path):
+                with open(img_path, "rb") as img_file:
+                    img_data = base64.b64encode(img_file.read()).decode('utf-8')
+                os.remove(img_path)
+        except Exception as e:
+            print(f"图片处理失败: {e}")
+        
+        # 生成HTML内容
+        try:
+            # 获取相似事件HTML
+            similar_events_html = ""
+            similar_events = prediction.get('similar_events', [])
+            if similar_events:
+                similar_events_html = """
+                <div class="section">
+                    <div class="section-title">相似历史事件</div>
+                    <ul class="similar-events">
+                """
+                
+                for i, event in enumerate(similar_events[:3]):
+                    similar_events_html += f"""
+                        <li>
+                            <strong>{html.escape(event['name'])}</strong> (相似度: {event['similarity']:.2%})
+                            <p>结果: {html.escape(event.get('outcome', '未知'))} | 准确率: {event.get('accuracy', 0.0):.2%}</p>
+                            <p>描述: {html.escape(event.get('description', '无描述')[:100])}...</p>
+                        </li>
+                    """
+                
+                similar_events_html += """
+                    </ul>
+                </div>
+                """
+            
+            # 生成变卦HTML
+            changing_html = ""
+            if changing:
+                changing_html = f"""
+                <div class="changing-section">
+                    <h3>变卦: {changing.name}</h3>
+                    <p><strong>卦辞:</strong> {changing.description}</p>
+                    <p><strong>要义:</strong> {changing.key}</p>
+                </div>
+                """
+            
+            # 生成行动建议HTML
+            advice_html = ""
+            try:
+                if any(keyword in hexagram.key for keyword in ["吉", "亨", "利"]) or \
+                   (changing and any(keyword in changing.key for keyword in ["吉", "亨", "利"])):
+                    advice_html = "<p>当前卦象显示有利趋势，可积极行动，把握机会。</p>"
+                elif any(keyword in hexagram.key for keyword in ["凶", "咎", "厉"]) or \
+                     (changing and any(keyword in changing.key for keyword in ["凶", "咎", "厉"])):
+                    advice_html = "<p>当前卦象显示不利趋势，建议谨慎行事，规避风险。</p>"
+                else:
+                    advice_html = "<p>卦象显示中性趋势，需结合具体情况决策，保持灵活。</p>"
+            except:
+                advice_html = "<p>无法提供具体行动建议，请参考卦辞和要义。</p>"
+            
+            html_content = f"""
+            <!DOCTYPE html>
+            <html lang="zh-CN">
+            <head>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>易经预测报告</title>
+                <style>
+                    * {{
+                        margin: 0;
+                        padding: 0;
+                        box-sizing: border-box;
+                    }}
+                    body {{
+                        font-family: 'SimSun', serif;
+                        max-width: 800px;
+                        margin: 0 auto;
+                        padding: 20px;
+                        background-color: #f9f5e7;
+                        color: #333;
+                        line-height: 1.6;
+                    }}
+                    .header {{
+                        text-align: center;
+                        border-bottom: 2px solid #8B4513;
+                        padding-bottom: 20px;
+                        margin-bottom: 30px;
+                    }}
+                    h1 {{
+                        color: #8B4513;
+                        font-size: 28px;
+                        margin: 15px 0;
+                    }}
+                    .hexagram {{
+                        text-align: center;
+                        margin: 30px 0;
+                        padding: 20px;
+                        background-color: #fff;
+                        border-radius: 10px;
+                        box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+                    }}
+                    .hexagram-img {{
+                        max-width: 250px;
+                        margin: 0 auto;
+                        display: block;
+                    }}
+                    .section {{
+                        margin-bottom: 30px;
+                        padding: 20px;
+                        background-color: #fff;
+                        border-radius: 10px;
+                        box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+                    }}
+                    .section-title {{
+                        background-color: #8B4513;
+                        color: white;
+                        padding: 10px 15px;
+                        border-radius: 5px;
+                        margin-bottom: 15px;
+                        font-weight: bold;
+                    }}
+                    .prediction-info {{
+                        background-color: #FFF8DC;
+                        padding: 20px;
+                        border-radius: 10px;
+                        margin-top: 20px;
+                    }}
+                    .similar-events li {{
+                        margin-bottom: 15px;
+                        padding-bottom: 15px;
+                        border-bottom: 1px dashed #ddd;
+                    }}
+                    .similar-events li:last-child {{
+                        border-bottom: none;
+                    }}
+                    .footer {{
+                        text-align: center;
+                        margin-top: 40px;
+                        color: #777;
+                        font-size: 0.9em;
+                        padding-top: 20px;
+                        border-top: 1px solid #ddd;
+                    }}
+                    h2, h3 {{
+                        color: #8B4513;
+                        margin: 15px 0 10px;
+                    }}
+                    p {{
+                        margin-bottom: 10px;
+                    }}
+                    .changing-section {{
+                        background-color: #f0f8ff;
+                        padding: 15px;
+                        border-radius: 8px;
+                        margin-top: 15px;
+                    }}
+                    .accuracy-info {{
+                        display: flex;
+                        justify-content: space-around;
+                        margin-top: 20px;
+                        font-size: 1.1em;
+                    }}
+                    .accuracy-item {{
+                        text-align: center;
+                        padding: 10px;
+                        background-color: #f5f5f5;
+                        border-radius: 8px;
+                        flex: 1;
+                        margin: 0 10px;
+                    }}
+                </style>
+            </head>
+            <body>
+                <div class="header">
+                    <h1>易经预测报告</h1>
+                    <p>生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+                </div>
+                
+                <div class="section">
+                    <div class="section-title">事件信息</div>
+                    <p><strong>事件名称:</strong> {html.escape(prediction.get('event_name', '未命名事件'))}</p>
+                    <p><strong>事件描述:</strong> {html.escape(prediction.get('event_description', '无描述'))}</p>
+                    <p><strong>起卦方法:</strong> {hexagram.method if hexagram else '未知'}</p>
+                </div>
+                
+                <div class="section">
+                    <div class="section-title">卦象分析</div>
+                    <div class="hexagram">
+            """
+            
+            if img_data:
+                html_content += f"""
+                        <img src="data:image/png;base64,{img_data}" alt="卦象" class="hexagram-img">
+                """
+            
+            html_content += f"""
+                        <h2>{hexagram.name}</h2>
+                        <p><strong>卦辞:</strong> {hexagram.description}</p>
+                        <p><strong>要义:</strong> {hexagram.key}</p>
+                    </div>
+                    
+                    <div class="prediction-info">
+                        <h3>详细解读</h3>
+                        <p><strong>五行分析:</strong> {hexagram.elemental_analysis}</p>
+            """
+            
+            # 添加变卦信息
+            html_content += changing_html
+            
+            # 添加变爻信息
+            if hexagram.changing_lines:
+                html_content += "<h3>变爻信息:</h3><ul>"
+                for pos, type in hexagram.changing_lines:
+                    html_content += f"<li>第{pos}爻: {type}</li>"
+                html_content += "</ul>"
+            
+            html_content += f"""
+                    </div>
+                </div>
+                
+                <div class="section">
+                    <div class="section-title">预测评估</div>
+                    <div class="accuracy-info">
+                        <div class="accuracy-item">
+                            <strong>历史准确率</strong><br>
+                            {prediction.get('historical_accuracy', 0.0)*100:.2f}%
+                        </div>
+                        <div class="accuracy-item">
+                            <strong>模型预测准确率</strong><br>
+                            {prediction.get('predicted_accuracy', 0.0)*100 if prediction.get('predicted_accuracy') else 'N/A':.2f}%
+                        </div>
+                    </div>
+                    
+                    <h3>行动建议</h3>
+                    {advice_html}
+                </div>
+            """
+            
+            # 添加相似事件
+            html_content += similar_events_html
+            
+            html_content += f"""
+                <div class="footer">
+                    <p>Generated by I Ching Prediction System</p>
+                    <p>© {datetime.now().year} - All rights reserved</p>
+                </div>
+            </body>
+            </html>
+            """
+            
+            # 确保文件名安全
+            filename = re.sub(r'[\\/*?:"<>|]', "", filename)
+            file_path = f"{filename}.html"
+            
+            # 保存文件
+            with open(file_path, "w", encoding="utf-8") as f:
+                f.write(html_content)
+            
+            return file_path
+        except Exception as e:
+            print(f"生成报告失败: {e}")
+            return "报告生成失败"
+    
+    def close(self):
+        """关闭资源"""
+        try:
+            if self.db:
+                self.db.close()
+        except:
+            pass
+
+# ========== 历史事件分析 ==========
+class HistoricalAnalyzer:
+    """历史事件分析类，预加载重要历史事件，使用上下文管理器"""
+    HISTORICAL_EVENTS = {
+        "刘邦入咸阳": {
+            "hexagram": (3, 1),  # 雷天大壮
+            "description": "公元前206年，刘邦率军攻入咸阳，秦朝灭亡。此卦象显示刚健而动，顺势而为的智慧。",
+            "outcome": "成功",
+            "analysis": "大壮卦象征强大有力，刘邦此时采取安抚政策，与关中父老约法三章，赢得民心。"
+        },
+        "诸葛亮北伐": {
+            "hexagram": (6, 4),  # 水山蹇
+            "description": "公元228-234年，诸葛亮五次北伐曹魏，最终病逝五丈原。",
+            "outcome": "未达目标",
+            "analysis": "蹇卦象征艰难险阻，诸葛亮北伐面临粮草不继、地形不利等困难，卦象提示'见险而能止'，但诸葛亮未能及时调整战略。"
+        },
+        "贞观之治": {
+            "hexagram": (1, 2),  # 天地泰
+            "description": "公元627-649年，唐太宗李世民开创的盛世时期。",
+            "outcome": "成功",
+            "analysis": "泰卦象征天地交泰，万物通遂。李世民采取开明政策，虚心纳谏，创造了政治清明、经济繁荣的局面。"
+        },
+        "王安石变法": {
+            "hexagram": (5, 7),  # 火泽睽
+            "description": "公元1069-1085年，北宋王安石推行的政治改革。",
+            "outcome": "失败",
+            "analysis": "睽卦象征意见不合，变法遭到保守派强烈反对，最终失败。卦象'二女同居，其志不同行'准确预示了改革派与保守派的冲突。"
+        },
+        "郑和下西洋": {
+            "hexagram": (8, 1),  # 风天小畜
+            "description": "公元1405-1433年，明朝郑和七次下西洋的航海壮举。",
+            "outcome": "成功",
+            "analysis": "小畜卦象征小有积蓄，逐步积累。郑和下西洋虽耗费巨大，但促进了中外交流，积累了航海经验。"
+        }
+    }
+    
+    def __init__(self, predictor):
+        self.predictor = predictor
+        # 初始化历史事件到数据库
+        self._initialize_historical_events()
+        
+    def __enter__(self):
+        return self
+        
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+        
+    def _initialize_historical_events(self):
+        """将预定义的历史事件添加到数据库，增强健壮性"""
+        if not self.predictor or not self.predictor.db:
+            return
+            
+        for event_name, data in self.HISTORICAL_EVENTS.items():
+            lower, upper = data["hexagram"]
+            try:
+                hexagram = Hexagram(lower, upper)
+                
+                # 生成事件签名和变爻
+                signature = self.predictor._generate_signature(event_name, data["description"])
+                hexagram.cast_changing_lines(signature)
+                
+                # 添加到数据库
+                self.predictor.db.add_event(
+                    event_name, 
+                    data["description"], 
+                    hexagram, 
+                    signature,
+                    data["outcome"]
+                )
+            except Exception as e:
+                print(f"添加历史事件失败({event_name}): {e}")
+                continue
+    
+    def close(self):
+        """关闭资源"""
+        try:
+            if self.predictor:
+                self.predictor.close()
+        except:
+            pass
+
+# ========== 主程序入口 - 增强版 ==========
+def main():
+    """主程序入口，增强错误处理和用户体验"""
+    print("易经预测系统启动...")
+    print("正在初始化数据库...")
+    
+    try:
+        # 创建预测器（使用上下文管理器）
+        with HexagramPredictor() as predictor:
+            # 创建历史分析器（使用上下文管理器）
+            with HistoricalAnalyzer(predictor) as analyzer:
+                # 训练机器学习模型
+                print("训练预测模型...")
+                if predictor.db:
+                    predictor.db.train_prediction_model()
+                
+                # 进入交互模式
+                predictor.set_interactive_mode(True)
+                
+                while True:
+                    try:
+                        predictor.interactive_predict()
+                    except KeyboardInterrupt:
+                        print("\n操作已取消")
+                        continue
+                    except Exception as e:
+                        print(f"交互过程中出错: {e}")
+                        traceback.print_exc()
+                    
+                    continue_pred = input("\n是否进行新的预测? (y/n): ").strip().lower()
+                    if continue_pred != 'y':
+                        break
+                
+                # 可视化准确率趋势
+                if predictor.db:
+                    visualize_trend = input("\n是否查看历史准确率趋势图? (y/n): ").strip().lower()
+                    if visualize_trend == 'y':
+                        predictor.db.visualize_accuracy_trend()
+                
+                print("\n程序结束")
+    except Exception as e:
+        print(f"程序运行时发生严重错误: {e}")
+        traceback.print_exc()
+    finally:
+        print("感谢使用易经预测系统")
+
+if __name__ == "__main__":
+    # 确保程序在任何情况下都能优雅退出
+    try:
+        main()
+    except:
+        print("程序意外终止")
+        sys.exit(1)
